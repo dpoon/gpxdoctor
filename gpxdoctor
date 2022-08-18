@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+
+########################################################################
+# gpxdoctor: Put fictitious data into a GPX file
+# Copyright (C) 2022 Dara Poon
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+########################################################################
+
+"""
+This program takes a geospatial track in GPX format and puts fictitious
+data into it.  It can be useful for fabricating an exercise activity out of a
+reconstructed route, if you forgot to record your activity.
+
+Please do not use this program for evil purposes.  Fabricating data is easy;
+fabricating plausible data is hard!
+"""
+
+import argparse
+from datetime import datetime, timedelta
+import sys
+import xml.etree.ElementTree as ET
+
+from pyproj import Geod
+
+GPX_XMLNS = 'http://www.topografix.com/GPX/1/1'
+
+def read_gpx(file):
+    return ET.parse(file)
+
+def print_gpx(gpx):
+    ET.register_namespace('', GPX_XMLNS)
+    print(ET.tostring(
+        gpx.getroot(),
+        encoding='unicode',
+        xml_declaration='1.0',
+    ))
+
+def edit_speed(gpx, speed_kmh):
+    XMLNS = {'': GPX_XMLNS}
+    ISO_TIME_FMT = '%Y-%m-%dT%H:%M:%S%z'
+    g = Geod(ellps='clrk66')
+    prev_timestamp, prev_pt = None, None
+    for trkpt in gpx.findall('./trk/trkseg/trkpt', XMLNS):
+        time = trkpt.find('time', XMLNS)
+        timestamp = datetime.strptime(time.text, ISO_TIME_FMT)
+        pt = (trkpt.attrib['lon'], trkpt.attrib['lat'])
+        if prev_timestamp and prev_pt:
+            _, _, dist = g.inv(*prev_pt, *pt)
+            timestamp = prev_timestamp + timedelta(hours=dist/(1000*speed_kmh))
+            time.text = timestamp.strftime(ISO_TIME_FMT)
+        prev_timestamp, prev_pt = timestamp, pt
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+        epilog='The modified GPX file is printed to standard output.')
+    parser.add_argument('--speed', metavar='KMH', type=float,
+        help='Speed in km/h')
+    parser.add_argument('gpxfile', type=argparse.FileType('rb'),
+        nargs='?', default=sys.stdin,
+        help='Input GPX file (reads from standard input if omitted)')
+    args = parser.parse_args()
+
+    gpx = read_gpx(args.gpxfile)
+    if args.speed is not None:
+        edit_speed(gpx, args.speed)
+    print_gpx(gpx)
+
+if __name__ == '__main__':
+    main()
